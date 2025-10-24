@@ -122,8 +122,10 @@ case "$OS" in
                 CXX="x86_64-w64-mingw32-g++-posix"
                 AR="x86_64-w64-mingw32-gcc-ar-posix"
                 CMAKE_SYSTEM_PROCESSOR="x86_64"
-                CFLAGS="-O3 -DNDEBUG -std=c11 -fPIC -march=x86-64 -mtune=generic"
-                CXXFLAGS="-O3 -DNDEBUG -std=c++14 -fPIC -march=x86-64 -mtune=generic"
+                # Target Windows 7 for better compatibility with older MinGW headers
+                # Disable mmap to avoid WIN32_MEMORY_RANGE_ENTRY dependency (Windows 8+ API)
+                CFLAGS="-O3 -DNDEBUG -std=c11 -fPIC -march=x86-64 -mtune=generic -D_WIN32_WINNT=0x0601"
+                CXXFLAGS="-O3 -DNDEBUG -std=c++14 -fPIC -march=x86-64 -mtune=generic -D_WIN32_WINNT=0x0601 -DGGML_USE_MMAP=0"
                 LDFLAGS="-static -pthread -static-libgcc -static-libstdc++"
                 ;;
             *)
