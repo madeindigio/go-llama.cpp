@@ -1,7 +1,11 @@
 package llama
 
+// NOTE: -lbinding is omitted from CGO LDFLAGS and provided by GoReleaser/Makefile per-platform
+// (e.g., -lbinding-linux-amd64). For local builds, set CGO_LDFLAGS environment variable:
+// CGO_LDFLAGS="-L./go-llama.cpp -lbinding -lm -lstdc++"
+
 // #cgo CXXFLAGS: -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp
-// #cgo LDFLAGS: -L${SRCDIR}/ -lbinding -lm -lstdc++
+// #cgo LDFLAGS: -L${SRCDIR}/ -lm -lstdc++
 // #cgo darwin LDFLAGS: -framework Accelerate
 // #cgo darwin CXXFLAGS: -std=c++11
 // #include "binding.h"
