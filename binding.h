@@ -38,6 +38,8 @@ int get_token_embeddings(void* params_ptr, void* state_pr,  int *tokens, int tok
 
 int get_embedding_size(void* state_pr);
 
+void* llama_allocate_params_for_embeddings(const char *prompt, int threads);
+
 void* llama_allocate_params(const char *prompt, int seed, int threads, int tokens,
                             int top_k, float top_p, float temp, float repeat_penalty, 
                             int repeat_last_n, bool ignore_eos, bool memory_f16, 

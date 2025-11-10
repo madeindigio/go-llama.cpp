@@ -35,42 +35,44 @@ void sigint_handler(int signo) {
 
 
 int get_embeddings(void* params_ptr, void* state_pr, float * res_embeddings) {
-    common_params* params_p = (common_params*) params_ptr;
+    common_params* params = (common_params*) params_ptr;
     llama_binding_state* state = (llama_binding_state*) state_pr;
     llama_context* ctx = state->context.get();
     llama_model* model = state->model.get();
-    common_params params = *params_p;
 
-    if (params.sampling.seed <= 0) {
-        params.sampling.seed = time(NULL);
+    if (params->sampling.seed <= 0) {
+        params->sampling.seed = time(NULL);
     }
-    
-    // no need for a rng
-    // std::mt19937 rng(params.seed);
-  
-    int n_past = 0;
 
     // tokenize the prompt using common_tokenize which returns a vector
-    auto embd_inp = common_tokenize(ctx, params.prompt, true, true);
-
+    auto embd_inp = common_tokenize(ctx, params->prompt, true, true);
 
     if (embd_inp.size() > 0) {
-        // Use llama_decode instead of deprecated llama_eval
+        // Create batch for embeddings - use sequence 0
         llama_batch batch = llama_batch_get_one(embd_inp.data(), embd_inp.size());
+        
         if (llama_decode(ctx, batch)) {
             fprintf(stderr, "%s : failed to decode\n", __func__);
             return 1;
         }
+        // Note: llama_batch_get_one returns a view, not an owned batch, so we don't free it
     }
 
-    const int n_embd = llama_n_embd(model);
+    const int n_embd = llama_model_n_embd(model);
 
-    const auto embeddings = llama_get_embeddings(ctx);
-
-    for (int i = 0; i < n_embd; i++) {
-        res_embeddings[i]=embeddings[i];
+    // Use sequence embeddings (pooling type dependent)
+    const float * embd = llama_get_embeddings_seq(ctx, 0);
+    if (embd == NULL) {
+        embd = llama_get_embeddings(ctx);
     }
-        
+    
+    if (embd == NULL) {
+        fprintf(stderr, "%s : failed to get embeddings\n", __func__);
+        return 1;
+    }
+
+    // Normalize embeddings (embd_norm = 2 by default in llama.cpp examples)
+    common_embd_normalize(embd, res_embeddings, n_embd, 2);
     return 0;
 }
 
@@ -144,6 +146,11 @@ void llama_binding_free_model(void * state_ptr) {
     state->model.reset();
     state->context.reset();
     state->lora.clear();
+    // Free params
+    if (state->params) {
+        delete state->params;
+        state->params = nullptr;
+    }
     delete state;
 }
 
@@ -215,6 +222,15 @@ void save_state(void *ctx, char *dst, char*modes) {
 // NOTE: This function is DISABLED for the current llama.cpp version
 // The sampling API has been completely rewritten and text generation is not supported
 // Only embeddings functionality is available - use Embeddings() method instead
+// Simplified params allocation for embeddings only
+void* llama_allocate_params_for_embeddings(const char *prompt, int threads) {
+    common_params * params = new common_params;
+    params->prompt = prompt;
+    params->cpuparams.n_threads = threads;
+    params->n_predict = 0;  // No text generation
+    return params;
+}
+
 void* llama_allocate_params(const char *prompt, int seed, int threads, int tokens, int top_k,
                             float top_p, float temp, float repeat_penalty, int repeat_last_n, bool ignore_eos, bool memory_f16, int n_batch, int n_keep, const char** antiprompt, int antiprompt_count,
                              float tfs_z, float typical_p, float frequency_penalty, float presence_penalty, int mirostat, float mirostat_eta, float mirostat_tau, bool penalize_nl, const char *logit_bias, const char *session_file, bool prompt_cache_all, bool mlock, bool mmap,

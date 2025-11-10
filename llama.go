@@ -145,6 +145,8 @@ func (l *LLama) Embeddings(text string, opts ...PredictOption) ([]float32, error
 	po := NewPredictOptions(opts...)
 
 	input := C.CString(text)
+	defer C.free(unsafe.Pointer(input))
+
 	// Auto-detect embedding size if not specified
 	if po.Tokens == 0 {
 		embdSize := int(C.get_embedding_size(l.state))
@@ -155,28 +157,10 @@ func (l *LLama) Embeddings(text string, opts ...PredictOption) ([]float32, error
 		}
 	}
 	floats := make([]float32, po.Tokens)
-	reverseCount := len(po.StopPrompts)
-	reversePrompt := make([]*C.char, reverseCount)
-	var pass **C.char
-	for i, s := range po.StopPrompts {
-		cs := C.CString(s)
-		reversePrompt[i] = cs
-		pass = &reversePrompt[0]
-	}
 
-	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
-		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
-		C.bool(po.IgnoreEOS), C.bool(po.F16KV),
-		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
-		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
-		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL), C.CString(po.LogitBias),
-		C.CString(po.PathPromptCache), C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
-		C.CString(po.MainGPU), C.CString(po.TensorSplit),
-		C.bool(po.PromptCacheRO),
-		C.CString(po.Grammar),
-		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), C.CString(po.NegativePrompt),
-		C.int(po.NDraft),
-	)
+	// Use simplified params allocation for embeddings
+	params := C.llama_allocate_params_for_embeddings(input, C.int(po.Threads))
+	defer C.llama_free_params(params)
 
 	ret := C.get_embeddings(params, l.state, (*C.float)(&floats[0]))
 	if ret != 0 {
