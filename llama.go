@@ -4,8 +4,8 @@ package llama
 // (e.g., -lbinding-linux-amd64). For local builds, set CGO_LDFLAGS environment variable:
 // CGO_LDFLAGS="-L./go-llama.cpp -lbinding -lm -lstdc++"
 
-// #cgo CXXFLAGS: -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp
-// #cgo LDFLAGS: -L${SRCDIR}/ -L${SRCDIR}/build -L${SRCDIR}/build/common -lllama -lcommon -lggml_static -lm -lstdc++ -lpthread
+// #cgo CXXFLAGS: -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp -I${SRCDIR}/llama.cpp/ggml/include -I${SRCDIR}/llama.cpp/include
+// #cgo LDFLAGS: -L${SRCDIR}/ -L${SRCDIR}/build/bin -L${SRCDIR}/build/common -lllama -lcommon -lggml -lggml-base -lm -lstdc++ -lpthread
 // #cgo darwin LDFLAGS: -framework Accelerate
 // #cgo darwin CXXFLAGS: -std=c++11
 // #include "binding.h"

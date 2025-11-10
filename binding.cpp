@@ -2,7 +2,7 @@
 #include "llama.h"
 
 #include "binding.h"
-#include "grammar-parser.h"
+// #include "grammar-parser.h"  // Removed in newer llama.cpp versions
 #include <cassert>
 #include <cinttypes>
 #include <cmath>
@@ -35,14 +35,14 @@ void sigint_handler(int signo) {
 
 
 int get_embeddings(void* params_ptr, void* state_pr, float * res_embeddings) {
-    gpt_params* params_p = (gpt_params*) params_ptr;
+    common_params* params_p = (common_params*) params_ptr;
     llama_binding_state* state = (llama_binding_state*) state_pr;
-    llama_context* ctx = state->ctx;
-    llama_model* model = state->model;
-    gpt_params params = *params_p;
+    llama_context* ctx = state->context.get();
+    llama_model* model = state->model.get();
+    common_params params = *params_p;
 
-    if (params.seed <= 0) {
-        params.seed = time(NULL);
+    if (params.sampling.seed <= 0) {
+        params.sampling.seed = time(NULL);
     }
     
     // no need for a rng
@@ -50,14 +50,13 @@ int get_embeddings(void* params_ptr, void* state_pr, float * res_embeddings) {
   
     int n_past = 0;
 
-    const bool add_bos = llama_vocab_type(model) == LLAMA_VOCAB_TYPE_SPM;
-    // tokenize the prompt
-    auto embd_inp = ::llama_tokenize(ctx, params.prompt, add_bos);
+    // tokenize the prompt using common_tokenize which returns a vector
+    auto embd_inp = common_tokenize(ctx, params.prompt, true, true);
 
 
     if (embd_inp.size() > 0) {
         // Use llama_decode instead of deprecated llama_eval
-        llama_batch batch = llama_batch_get_one(embd_inp.data(), embd_inp.size(), n_past, 0);
+        llama_batch batch = llama_batch_get_one(embd_inp.data(), embd_inp.size());
         if (llama_decode(ctx, batch)) {
             fprintf(stderr, "%s : failed to decode\n", __func__);
             return 1;
@@ -77,15 +76,16 @@ int get_embeddings(void* params_ptr, void* state_pr, float * res_embeddings) {
 
 
 int get_token_embeddings(void* params_ptr, void* state_pr,  int *tokens, int tokenSize, float * res_embeddings) {
-    gpt_params* params_p = (gpt_params*) params_ptr;
+    common_params* params_p = (common_params*) params_ptr;
     llama_binding_state* state = (llama_binding_state*) state_pr;
-    llama_context* ctx = state->ctx;
-    llama_model* model = state->model;
-    gpt_params params = *params_p;
+    llama_context* ctx = state->context.get();
+    llama_model* model = state->model.get();
+    common_params params = *params_p;
  
+    const struct llama_vocab * vocab = llama_model_get_vocab(model);
     for (int i = 0; i < tokenSize; i++) {
         char buf[128];
-        int n = llama_token_to_piece(model, tokens[i], buf, sizeof(buf));
+        int n = llama_token_to_piece(vocab, tokens[i], buf, sizeof(buf), 0, true);
         if (n < 0) {
             fprintf(stderr, "%s: error: failed to convert token to piece\n", __func__);
             return 1;
@@ -99,34 +99,19 @@ int get_token_embeddings(void* params_ptr, void* state_pr,  int *tokens, int tok
 
 int get_embedding_size(void* state_pr) {
     llama_binding_state* state = (llama_binding_state*) state_pr;
-    llama_model* model = state->model;
+    llama_model* model = state->model.get();
     return llama_n_embd(model);
 }
 
+// NOTE: This function is DISABLED - text generation not supported
 int eval(void* params_ptr,void* state_pr,char *text) {
-    gpt_params* params_p = (gpt_params*) params_ptr;
-    llama_binding_state* state = (llama_binding_state*) state_pr;
-    llama_context* ctx = state->ctx;
-    llama_model* model = state->model;
-
-    auto n_past = 0;
-
-    auto tokens = std::vector<llama_token>(params_p->n_ctx);
-    std::string str = std::string(text);
-    auto n_prompt_tokens = llama_tokenize(model, str.data(), str.length(), tokens.data(), tokens.size(), true, false);
-
-    if (n_prompt_tokens < 1) {
-        fprintf(stderr, "%s : failed to tokenize prompt\n", __func__);
-        return 1;
-    }
-
-    // evaluate prompt using llama_decode
-    llama_batch batch = llama_batch_get_one(tokens.data(), n_prompt_tokens, n_past, 0);
-    return llama_decode(ctx, batch);
+    fprintf(stderr, "ERROR: eval is disabled - text generation not supported in this version\n");
+    fprintf(stderr, "       Please use the Embeddings() method for embedding generation\n");
+    return 1;
 }
 
 static llama_context ** g_ctx;
-static gpt_params               * g_params;
+static common_params               * g_params;
 static std::vector<llama_token> * g_input_tokens;
 static std::ostringstream       * g_output_ss;
 static std::vector<llama_token> * g_output_tokens;
@@ -153,27 +138,25 @@ int speculative_sampling(void* params_ptr, void* target_model, void* draft_model
     return 1;
 }
 
-void llama_binding_free_model(void *state_ptr) {
+void llama_binding_free_model(void * state_ptr) {
     llama_binding_state* state = (llama_binding_state*) state_ptr;
-    llama_free(state->ctx);
-    llama_free_model(state->model);
+    // Smart pointers will automatically free resources
+    state->model.reset();
+    state->context.reset();
+    state->lora.clear();
     delete state;
 }
 
 void llama_free_params(void* params_ptr) {
-    gpt_params* params = (gpt_params*) params_ptr;
+    common_params* params = (common_params*) params_ptr;
     delete params;
 }
 
+// NOTE: This function is DISABLED - text generation not supported
 int llama_tokenize_string(void* params_ptr, void* state_pr, int* result) {
-    gpt_params* params_p = (gpt_params*) params_ptr;
-    llama_binding_state* state = (llama_binding_state*) state_pr;
-    llama_context* ctx = state->ctx;
-    llama_model* model = state->model;
-
-    const bool add_bos = llama_vocab_type(model) == LLAMA_VOCAB_TYPE_SPM;
-
-    return llama_tokenize(model, params_p->prompt.data(), params_p->prompt.length(), result, params_p->n_ctx, add_bos, false);
+    fprintf(stderr, "ERROR: llama_tokenize_string is disabled - text generation not supported in this version\n");
+    fprintf(stderr, "       Please use the Embeddings() method for embedding generation\n");
+    return 1;
 }
 
 
@@ -191,13 +174,12 @@ void delete_vector(std::vector<std::string>* vec) {
 
 int load_state(void *ctx, char *statefile, char*modes) {
     llama_context* state = (llama_context*) ctx;
-const llama_context* constState = static_cast<const llama_context*>(state);
     const size_t state_size = llama_get_state_size(state);
     uint8_t * state_mem = new uint8_t[state_size];
 
   {
         FILE *fp_read = fopen(statefile, modes);
-        if (state_size != llama_get_state_size(constState)) {
+        if (state_size != llama_get_state_size(state)) {
             fprintf(stderr, "\n%s : failed to validate state size\n", __func__);
             return 1;
         }
@@ -230,84 +212,18 @@ void save_state(void *ctx, char *dst, char*modes) {
     }
 }
 
+// NOTE: This function is DISABLED for the current llama.cpp version
+// The sampling API has been completely rewritten and text generation is not supported
+// Only embeddings functionality is available - use Embeddings() method instead
 void* llama_allocate_params(const char *prompt, int seed, int threads, int tokens, int top_k,
                             float top_p, float temp, float repeat_penalty, int repeat_last_n, bool ignore_eos, bool memory_f16, int n_batch, int n_keep, const char** antiprompt, int antiprompt_count,
                              float tfs_z, float typical_p, float frequency_penalty, float presence_penalty, int mirostat, float mirostat_eta, float mirostat_tau, bool penalize_nl, const char *logit_bias, const char *session_file, bool prompt_cache_all, bool mlock, bool mmap,
                              const char *maingpu,const char *tensorsplit , bool prompt_cache_ro, const char *grammar,
                              float rope_freq_base, float rope_freq_scale, float negative_prompt_scale, const char* negative_prompt, int n_draft) {
-    gpt_params* params = new gpt_params;
-    params->seed = seed;
-    params->n_threads = threads;
-    params->n_predict = tokens;
-    // repeat_last_n moved to sparams
-    params->sparams.penalty_last_n = repeat_last_n;
-    params->prompt_cache_ro = prompt_cache_ro;
-    // top_k, top_p, temp, repeat_penalty moved to sparams
-    params->sparams.top_k = top_k;
-    params->sparams.top_p = top_p;
-    params->sparams.temp = temp;
-    params->sparams.penalty_repeat = repeat_penalty;
-    // memory_f16 removed from API
-    params->use_mmap = mmap;
-    params->use_mlock = mlock;
-    params->n_batch = n_batch;
-    params->n_keep = n_keep;
-    // grammar moved to sparams
-    params->sparams.grammar = std::string(grammar);
-    params->rope_freq_base = rope_freq_base;
-    params->rope_freq_scale = rope_freq_scale;
-    // cfg_scale and cfg_negative_prompt removed from current API
-    params->n_draft = n_draft;
-    if (maingpu[0] != '\0') { 
-        params->main_gpu = std::stoi(maingpu);
-    }
-
-    if (tensorsplit[0] != '\0') { 
-        std::string arg_next = tensorsplit;
-            // split string by , and /
-            const std::regex regex{R"([,/]+)"};
-            std::sregex_token_iterator it{arg_next.begin(), arg_next.end(), regex, -1};
-            std::vector<std::string> split_arg{it, {}};
-            GGML_ASSERT(split_arg.size() <= 128);
-
-            for (size_t i = 0; i < 128; ++i) {
-                if (i < split_arg.size()) {
-                    params->tensor_split[i] = std::stof(split_arg[i]);
-                } else {
-                    params->tensor_split[i] = 0.0f;
-                }
-            }  
-    }
-
-    params->prompt_cache_all = prompt_cache_all;
-    params->path_prompt_cache = session_file;
-
-    if (ignore_eos) {
-        params->ignore_eos = true;
-    }
-    if(antiprompt_count > 0) {
-      params->antiprompt = create_vector(antiprompt, antiprompt_count);
-    }
-    // tfs_z, typical_p, presence_penalty, mirostat fields moved to sparams
-    params->sparams.tfs_z = tfs_z;
-    params->sparams.typical_p = typical_p;
-    params->sparams.penalty_present = presence_penalty;
-    params->sparams.penalty_freq = frequency_penalty;
-    params->sparams.mirostat = mirostat;
-    params->sparams.mirostat_eta = mirostat_eta;
-    params->sparams.mirostat_tau = mirostat_tau;
-    params->sparams.penalize_nl = penalize_nl;
-    // logit_bias moved to sparams
-    std::stringstream ss(logit_bias);
-    llama_token key;
-    char sign;
-    std::string value_str;
-    if (ss >> key && ss >> sign && std::getline(ss, value_str) && (sign == '+' || sign == '-')) {
-        params->sparams.logit_bias[key] = std::stof(value_str) * ((sign == '-') ? -1.0f : 1.0f);
-    } 
-    params->prompt = prompt;
-    
-    return params;
+    fprintf(stderr, "ERROR: llama_allocate_params is disabled - text generation not supported in this version\n");
+    fprintf(stderr, "       Please use the Embeddings() method for embedding generation\n");
+    fprintf(stderr, "       Text generation requires updating to new llama_sampling_* API\n");
+    return nullptr;
 }
 
 void* load_model(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, const char *maingpu, const char *tensorsplit, bool numa, float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity) {
@@ -335,15 +251,15 @@ llama_token llama_sample_token_binding(
                   struct llama_context * ctx,
                   struct llama_context * ctx_guidance,
                   struct llama_grammar * grammar,
-               const struct gpt_params * g_params,
+               const struct common_params * g_params,
         const std::vector<llama_token> & last_tokens,
          std::vector<llama_token_data> & candidates,
                                    int   idx = 0);
 
 common.cpp:
 
-gpt_params* create_gpt_params(const std::string& fname,const std::string& lora,const std::string& lora_base) {
-   gpt_params* lparams = new gpt_params;
+common_params* create_common_params(const std::string& fname,const std::string& lora,const std::string& lora_base) {
+   common_params* lparams = new common_params;
     fprintf(stderr, "%s: loading model %s\n", __func__, fname.c_str());
 
     // Initialize the 'model' member with the 'fname' parameter
@@ -356,8 +272,8 @@ gpt_params* create_gpt_params(const std::string& fname,const std::string& lora,c
     return lparams;
 }
 
-gpt_params* create_gpt_params_cuda(const std::string& fname) {
-   gpt_params* lparams = new gpt_params;
+common_params* create_common_params_cuda(const std::string& fname) {
+   common_params* lparams = new common_params;
     fprintf(stderr, "%s: loading model %s\n", __func__, fname.c_str());
 
     // Initialize the 'model' member with the 'fname' parameter
@@ -367,12 +283,12 @@ gpt_params* create_gpt_params_cuda(const std::string& fname) {
 
 void* load_binding_model(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, const char *maingpu, const char *tensorsplit, bool numa,  float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity) {
     // load the model
-    gpt_params * lparams;
+    common_params * lparams;
 // Temporary workaround for https://github.com/go-skynet/go-llama.cpp/issues/218
 #ifdef GGML_USE_CUBLAS
-    lparams = create_gpt_params_cuda(fname);
+    lparams = create_common_params_cuda(fname);
 #else
-    lparams = create_gpt_params(fname, lora, lora_base);
+    lparams = create_common_params(fname, lora, lora_base);
 #endif
     llama_model * model;
     llama_binding_state * state;
@@ -426,7 +342,7 @@ void* load_binding_model(const char *fname, int n_ctx, int n_seed, bool memory_f
 
     llama_backend_init(numa);
 
-    std::tie(model, ctx) = llama_init_from_gpt_params(*lparams);
+    std::tie(model, ctx) = llama_init_from_common_params(*lparams);
     if (model == NULL) {
         fprintf(stderr, "%s: error: unable to load model\n", __func__);
         return nullptr;
@@ -443,13 +359,13 @@ llama_token llama_sample_token_binding(
                   struct llama_context * ctx,
                   struct llama_context * ctx_guidance,
                   struct llama_grammar * grammar,
-               const struct gpt_params * g_params,  // NOTE: this is our patch
+               const struct common_params * g_params,  // NOTE: this is our patch
         const std::vector<llama_token> & last_tokens,
          std::vector<llama_token_data> & candidates,
                                    int   idx) {
 
    
-    struct gpt_params params = *g_params;  // NOTE: this is our patch
+    struct common_params params = *g_params;  // NOTE: this is our patch
     const int n_ctx   = llama_n_ctx(ctx);
     const int n_vocab = llama_n_vocab(ctx);
 
