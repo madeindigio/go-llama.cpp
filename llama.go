@@ -5,7 +5,7 @@ package llama
 // CGO_LDFLAGS="-L./go-llama.cpp -lbinding -lm -lstdc++"
 
 // #cgo CXXFLAGS: -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp
-// #cgo LDFLAGS: -L${SRCDIR}/ -lm -lstdc++
+// #cgo LDFLAGS: -L${SRCDIR}/ -L${SRCDIR}/build -L${SRCDIR}/build/common -lllama -lcommon -lggml_static -lm -lstdc++ -lpthread
 // #cgo darwin LDFLAGS: -framework Accelerate
 // #cgo darwin CXXFLAGS: -std=c++11
 // #include "binding.h"
@@ -145,8 +145,14 @@ func (l *LLama) Embeddings(text string, opts ...PredictOption) ([]float32, error
 	po := NewPredictOptions(opts...)
 
 	input := C.CString(text)
+	// Auto-detect embedding size if not specified
 	if po.Tokens == 0 {
-		po.Tokens = 99999999
+		embdSize := int(C.get_embedding_size(l.state))
+		if embdSize > 0 {
+			po.Tokens = embdSize
+		} else {
+			po.Tokens = 99999999
+		}
 	}
 	floats := make([]float32, po.Tokens)
 	reverseCount := len(po.StopPrompts)

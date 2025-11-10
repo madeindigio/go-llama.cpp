@@ -127,6 +127,9 @@ ifneq ($(filter armv8%,$(UNAME_M)),)
 	CFLAGS += -mfp16-format=ieee -mno-unaligned-access
 endif
 
+# Enable static linking for all builds
+CMAKE_ARGS+=-DLLAMA_STATIC=ON
+
 ifeq ($(BUILD_TYPE),openblas)
 	EXTRA_LIBS=
 	CMAKE_ARGS+=-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS -DBLAS_INCLUDE_DIRS=/usr/include/openblas

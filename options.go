@@ -77,7 +77,7 @@ var DefaultModelOptions ModelOptions = ModelOptions{
 var DefaultOptions PredictOptions = PredictOptions{
 	Seed:              -1,
 	Threads:           4,
-	Tokens:            128,
+	Tokens:            0,
 	Penalty:           1.1,
 	Repeat:            64,
 	Batch:             512,
