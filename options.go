@@ -4,6 +4,7 @@ type ModelOptions struct {
 	ContextSize   int
 	Seed          int
 	NBatch        int
+	NUBatch       int
 	F16Memory     bool
 	MLock         bool
 	MMap          bool
@@ -70,6 +71,7 @@ var DefaultModelOptions ModelOptions = ModelOptions{
 	MMap:          true,
 	LowVRAM:       false,
 	NBatch:        512,
+	NUBatch:       2048,
 	FreqRopeBase:  10000,
 	FreqRopeScale: 1.0,
 }
@@ -151,6 +153,14 @@ func SetMMap(b bool) ModelOption {
 func SetNBatch(n_batch int) ModelOption {
 	return func(p *ModelOptions) {
 		p.NBatch = n_batch
+	}
+}
+
+// SetNUBatch sets the n_ubatch (physical batch size)
+// This is especially important for embeddings models where n_ubatch must be >= number of tokens
+func SetNUBatch(n_ubatch int) ModelOption {
+	return func(p *ModelOptions) {
+		p.NUBatch = n_ubatch
 	}
 }
 

@@ -40,10 +40,10 @@ func New(model string, opts ...ModelOption) (*LLama, error) {
 		MulMatQ = *mo.MulMatQ
 	}
 
-	result := C.load_model(modelPath,
+	result := C.load_model_custom(modelPath,
 		C.int(mo.ContextSize), C.int(mo.Seed),
 		C.bool(mo.F16Memory), C.bool(mo.MLock), C.bool(mo.Embeddings), C.bool(mo.MMap), C.bool(mo.LowVRAM),
-		C.int(mo.NGPULayers), C.int(mo.NBatch), C.CString(mo.MainGPU), C.CString(mo.TensorSplit), C.bool(mo.NUMA),
+		C.int(mo.NGPULayers), C.int(mo.NBatch), C.int(mo.NUBatch), C.CString(mo.MainGPU), C.CString(mo.TensorSplit), C.bool(mo.NUMA),
 		C.float(mo.FreqRopeBase), C.float(mo.FreqRopeScale),
 		C.bool(MulMatQ), loraAdapter, loraBase, C.bool(mo.Perplexity),
 	)

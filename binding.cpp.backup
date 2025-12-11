@@ -5,7 +5,6 @@
 // #include "grammar-parser.h"  // Removed in newer llama.cpp versions
 #include <cassert>
 #include <cinttypes>
-void* load_binding_model_custom(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, int n_ubatch, const char *maingpu, const char *tensorsplit, bool numa,  float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity);
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -33,14 +32,6 @@ void sigint_handler(int signo) {
     }
 }
 #endif
-
-// State structure for binding - holds model and context with smart pointers
-struct llama_binding_state {
-    llama_context_ptr context;
-    llama_model_ptr model;
-    std::vector<llama_adapter_lora_ptr> lora;
-    common_params* params = nullptr;
-};
 
 
 int get_embeddings(void* params_ptr, void* state_pr, float * res_embeddings) {
@@ -246,65 +237,89 @@ void* llama_allocate_params(const char *prompt, int seed, int threads, int token
                              const char *maingpu,const char *tensorsplit , bool prompt_cache_ro, const char *grammar,
                              float rope_freq_base, float rope_freq_scale, float negative_prompt_scale, const char* negative_prompt, int n_draft) {
     fprintf(stderr, "ERROR: llama_allocate_params is disabled - text generation not supported in this version\n");
+    fprintf(stderr, "       Please use the Embeddings() method for embedding generation\n");
     fprintf(stderr, "       Text generation requires updating to new llama_sampling_* API\n");
     return nullptr;
 }
 
-void* load_model_custom(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, int n_ubatch, const char *maingpu, const char *tensorsplit, bool numa, float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity) {
-    fprintf(stderr, "DEBUG: load_model called with n_batch=%d, n_ubatch=%d\n", n_batch, n_ubatch);
-    fflush(stderr);
-    printf("DEBUG_STDOUT: load_model called with n_batch=%d, n_ubatch=%d\n", n_batch, n_ubatch);
-    fflush(stdout);
-   return load_binding_model_custom(fname, n_ctx, n_seed, memory_f16, mlock, embeddings, mmap, low_vram, n_gpu_layers, n_batch, n_ubatch, maingpu, tensorsplit, numa, rope_freq_base, rope_freq_scale, mul_mat_q, lora, lora_base, perplexity);
+void* load_model(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, int n_ubatch, const char *maingpu, const char *tensorsplit, bool numa, float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity) {
+   return load_binding_model(fname, n_ctx, n_seed, memory_f16, mlock, embeddings, mmap, low_vram, n_gpu_layers, n_batch, maingpu, tensorsplit, numa, rope_freq_base, rope_freq_scale, mul_mat_q, lora, lora_base, perplexity);
 }
 
-void* load_binding_model_custom(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, int n_ubatch, const char *maingpu, const char *tensorsplit, bool numa,  float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity) {
-    // Silence llama.cpp logs to reduce noise
-    llama_log_set([](enum ggml_log_level level, const char * text, void * user_data) {
-        // Only log errors and warnings, ignore info messages
-        if (level <= GGML_LOG_LEVEL_WARN) {
-            fprintf(stderr, "%s", text);
-        }
-    }, nullptr);
-    
+/*
+
+Currently we hard patch the following functions to common.cpp and common.h into the llama library due to a bug into the nvcc/gcc compiler. 
+It seems that copying by value lead to a misalignment of structure and copy - resulting in a mixed up values that we pass by.
+
+See also: https://github.com/ggerganov/llama.cpp/pull/1902
+Keeping them here in sync to generate again patches if needed.
+
+common.h:
+
+struct llama_binding_state {
+    llama_context * ctx;
+    llama_model * model;
+};
+
+void* load_binding_model(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, int n_ubatch, const char *maingpu, const char *tensorsplit, bool numa,  float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity);
+
+llama_token llama_sample_token_binding(
+                  struct llama_context * ctx,
+                  struct llama_context * ctx_guidance,
+                  struct llama_grammar * grammar,
+               const struct common_params * g_params,
+        const std::vector<llama_token> & last_tokens,
+         std::vector<llama_token_data> & candidates,
+                                   int   idx = 0);
+
+common.cpp:
+
+common_params* create_common_params(const std::string& fname,const std::string& lora,const std::string& lora_base) {
+   common_params* lparams = new common_params;
+    fprintf(stderr, "%s: loading model %s\n", __func__, fname.c_str());
+
+    // Initialize the 'model' member with the 'fname' parameter
+    lparams->model = fname;
+    lparams->lora_base = lora_base;
+    lparams->lora_adapter = lora;
+    if (lparams->lora_adapter.empty()) {
+        lparams->use_mmap = false;
+    }
+    return lparams;
+}
+
+common_params* create_common_params_cuda(const std::string& fname) {
+   common_params* lparams = new common_params;
+    fprintf(stderr, "%s: loading model %s\n", __func__, fname.c_str());
+
+    // Initialize the 'model' member with the 'fname' parameter
+    lparams->model = fname;
+    return lparams;
+}
+
+void* load_binding_model(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, int n_ubatch, const char *maingpu, const char *tensorsplit, bool numa,  float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity) {
     // load the model
     common_params * lparams;
-    
-    std::string fname_str = fname;
-    std::string lora_str = lora;
-    std::string lora_base_str = lora_base;
-
 // Temporary workaround for https://github.com/go-skynet/go-llama.cpp/issues/218
 #ifdef GGML_USE_CUBLAS
-    lparams = new common_params();
-    lparams->model.path = fname_str;
+    lparams = create_common_params_cuda(fname);
 #else
-    lparams = new common_params();
-    lparams->model.path = fname_str;
+    lparams = create_common_params(fname, lora, lora_base);
 #endif
-    
-    llama_binding_state * state = new llama_binding_state;
-    
+    llama_model * model;
+    llama_binding_state * state;
+    state = new llama_binding_state;
+    llama_context * ctx;
     lparams->n_ctx      = n_ctx;
-    lparams->sampling.seed       = n_seed;
-    // lparams->memory_f16     = memory_f16; // Removed in newer llama.cpp? Check common_params definition if needed. 
-    // common_params usually has bool f16_kv? No, it has enum.
-    // Let's assume memory_f16 maps to something or ignore if not critical for now.
-    // Actually common_params struct in common.h has:
-    // bool flash_attn = false;
-    // bool use_mmap = true;
-    // bool use_mlock = false;
-    // ...
-    // It doesn't seem to have memory_f16 directly. It might be type_k/v?
-    
+    lparams->seed       = n_seed;
+    lparams->memory_f16     = memory_f16;
     lparams->embedding  = embeddings;
     lparams->use_mlock  = mlock;
     lparams->n_gpu_layers = n_gpu_layers;
-
+    lparams->perplexity = perplexity;
     lparams->use_mmap = mmap;
 
-    // lparams->low_vram = low_vram; // Not in common_params?
-    
+    lparams->low_vram = low_vram;
     if (rope_freq_base != 0.0f) {
         lparams->rope_freq_base = rope_freq_base;
     } else {
@@ -317,8 +332,7 @@ void* load_binding_model_custom(const char *fname, int n_ctx, int n_seed, bool m
         lparams->rope_freq_scale =  1.0f;
     }
 
-    // lparams->model = fname; // Already set by create_common_params
-    
+    lparams->model = fname;
     if (maingpu[0] != '\0') { 
         lparams->main_gpu = std::stoi(maingpu);
     }
@@ -329,9 +343,9 @@ void* load_binding_model_custom(const char *fname, int n_ctx, int n_seed, bool m
             const std::regex regex{R"([,/]+)"};
             std::sregex_token_iterator it{arg_next.begin(), arg_next.end(), regex, -1};
             std::vector<std::string> split_arg{it, {}};
-            GGML_ASSERT(split_arg.size() <= 128);
+            GGML_ASSERT(split_arg.size() <= LLAMA_MAX_DEVICES);
 
-            for (size_t i = 0; i < 128; ++i) {
+            for (size_t i = 0; i < LLAMA_MAX_DEVICES; ++i) {
                 if (i < split_arg.size()) {
                     lparams->tensor_split[i] = std::stof(split_arg[i]);
                 } else {
@@ -341,42 +355,164 @@ void* load_binding_model_custom(const char *fname, int n_ctx, int n_seed, bool m
     }
 
     lparams->n_batch      = n_batch;
-    fprintf(stderr, "[DEBUG] load_binding_model_custom: Before setting n_ubatch, lparams->n_ubatch = %d\n", lparams->n_ubatch);
-    lparams->n_ubatch     = n_ubatch; // THIS IS THE FIX
-    fprintf(stderr, "[DEBUG] load_binding_model_custom: After setting n_ubatch = %d, lparams->n_ubatch = %d\n", n_ubatch, lparams->n_ubatch);
+    lparams->n_ubatch     = n_ubatch;
+
+    lparams->n_batch      = n_batch;
+    fprintf(stderr, "[DEBUG-BINDING] Before setting n_ubatch, lparams->n_ubatch = %d\n", lparams->n_ubatch);
+    lparams->n_ubatch     = n_ubatch;
+    fprintf(stderr, "[DEBUG-BINDING] After setting n_ubatch = %d, lparams->n_ubatch = %d\n", n_ubatch, lparams->n_ubatch);
     fflush(stderr);
 
-    llama_backend_init(); // numa argument removed in newer llama.cpp? common_init handles it?
-    // common_init calls llama_backend_init.
-    // But we call common_init_from_params.
-    // common_init_from_params does NOT call llama_backend_init.
-    // common_init (void) calls llama_backend_init.
-    
-    // Let's call llama_backend_init(numa); if available.
-    // llama_backend_init() takes no args in newer versions?
-    // Check llama.h if possible. Assuming void for now as per common.h usage?
-    // Wait, common.h doesn't show llama_backend_init.
-    
-    // Let's assume llama_backend_init() is correct.
-    llama_backend_init();
-    
-    // common_init_from_params returns common_init_result (struct)
-    common_init_result result = common_init_from_params(*lparams);
-    
-    if (result.model == nullptr) {
+    llama_backend_init(numa);
+    lparams->n_batch      = n_batch;
+    fprintf(stderr, "[DEBUG-BINDING] Before setting n_ubatch, lparams->n_ubatch = %d\n", lparams->n_ubatch);
+    lparams->n_ubatch     = n_ubatch;
+    fprintf(stderr, "[DEBUG-BINDING] After setting n_ubatch = %d, lparams->n_ubatch = %d\n", n_ubatch, lparams->n_ubatch);
+    fflush(stderr);
+
+    llama_backend_init(numa);
+    lparams->n_batch      = n_batch;
+    fprintf(stderr, "[DEBUG-BINDING] Before setting n_ubatch, lparams->n_ubatch = %d\n", lparams->n_ubatch);
+    lparams->n_ubatch     = n_ubatch;
+    fprintf(stderr, "[DEBUG-BINDING] After setting n_ubatch = %d, lparams->n_ubatch = %d\n", n_ubatch, lparams->n_ubatch);
+    fflush(stderr);
+
+    llama_backend_init(numa);
+    lparams->n_batch      = n_batch;
+    fprintf(stderr, "[DEBUG-BINDING] Before setting n_ubatch, lparams->n_ubatch = %d\n", lparams->n_ubatch);
+    lparams->n_ubatch     = n_ubatch;
+    fprintf(stderr, "[DEBUG-BINDING] After setting n_ubatch = %d, lparams->n_ubatch = %d\n", n_ubatch, lparams->n_ubatch);
+    fflush(stderr);
+
+    llama_backend_init(numa);
         fprintf(stderr, "%s: error: unable to load model\n", __func__);
         return nullptr;
     }
-    
-    state->context = std::move(result.context); // unique_ptr move
-    state->model = std::move(result.model); // unique_ptr move
-    state->lora = std::move(result.lora); // vector move
-    state->params = lparams;
-    
+    state->ctx = ctx;
+    state->model= model;
     return state;
 }
 
-// Wrapper function for compatibility - calls load_model_custom
-void* load_model(const char *fname, int n_ctx, int n_seed, bool memory_f16, bool mlock, bool embeddings, bool mmap, bool low_vram, int n_gpu_layers, int n_batch, int n_ubatch, const char *maingpu, const char *tensorsplit, bool numa, float rope_freq_base, float rope_freq_scale, bool mul_mat_q, const char *lora, const char *lora_base, bool perplexity) {
-   return load_model_custom(fname, n_ctx, n_seed, memory_f16, mlock, embeddings, mmap, low_vram, n_gpu_layers, n_batch, n_ubatch, maingpu, tensorsplit, numa, rope_freq_base, rope_freq_scale, mul_mat_q, lora, lora_base, perplexity);
+// Note: the only difference here is passing params as a pointer and avoid copy-by-value
+// We stick to another function to avoid patching all the llama.cpp code
+// We need the function to be in the common.o object, as using it in the binding does not make effect.
+llama_token llama_sample_token_binding(
+                  struct llama_context * ctx,
+                  struct llama_context * ctx_guidance,
+                  struct llama_grammar * grammar,
+               const struct common_params * g_params,  // NOTE: this is our patch
+        const std::vector<llama_token> & last_tokens,
+         std::vector<llama_token_data> & candidates,
+                                   int   idx) {
+
+   
+    struct common_params params = *g_params;  // NOTE: this is our patch
+    const int n_ctx   = llama_n_ctx(ctx);
+    const int n_vocab = llama_n_vocab(ctx);
+
+    const float   temp            = params.temp;
+    const int32_t top_k           = params.top_k <= 0 ? n_vocab : params.top_k;
+    const float   top_p           = params.top_p;
+    const float   tfs_z           = params.tfs_z;
+    const float   typical_p       = params.typical_p;
+    const int32_t repeat_last_n   = params.repeat_last_n < 0 ? n_ctx : params.repeat_last_n;
+    const float   repeat_penalty  = params.repeat_penalty;
+    const float   alpha_presence  = params.presence_penalty;
+    const float   alpha_frequency = params.frequency_penalty;
+    const int     mirostat        = params.mirostat;
+    const float   mirostat_tau    = params.mirostat_tau;
+    const float   mirostat_eta    = params.mirostat_eta;
+    const bool    penalize_nl     = params.penalize_nl;
+
+    llama_token id = 0;
+
+    float * logits = llama_get_logits(ctx) + idx * n_vocab;
+
+    // Apply params.logit_bias map
+    for (auto it = params.logit_bias.begin(); it != params.logit_bias.end(); it++) {
+        logits[it->first] += it->second;
+    }
+
+    candidates.clear();
+    for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
+        candidates.emplace_back(llama_token_data{token_id, logits[token_id], 0.0f});
+    }
+
+    llama_token_data_array cur_p = { candidates.data(), candidates.size(), false };
+
+    if (ctx_guidance) {
+        llama_sample_classifier_free_guidance(ctx, &cur_p, ctx_guidance, params.cfg_scale);
+    }
+
+    // apply penalties
+    if (!last_tokens.empty()) {
+        const float nl_logit = logits[llama_token_nl(ctx)];
+        const int last_n_repeat = std::min(std::min((int)last_tokens.size(), repeat_last_n), n_ctx);
+
+        llama_sample_repetition_penalty(ctx, &cur_p,
+                last_tokens.data() + last_tokens.size() - last_n_repeat,
+                last_n_repeat, repeat_penalty);
+        llama_sample_frequency_and_presence_penalties(ctx, &cur_p,
+                last_tokens.data() + last_tokens.size() - last_n_repeat,
+                last_n_repeat, alpha_frequency, alpha_presence);
+
+        if (!penalize_nl) {
+            for (size_t idx = 0; idx < cur_p.size; idx++) {
+                if (cur_p.data[idx].id == llama_token_nl(ctx)) {
+                    cur_p.data[idx].logit = nl_logit;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (grammar != NULL) {
+        llama_sample_grammar(ctx, &cur_p, grammar);
+    }
+
+    if (temp <= 0) {
+        // Greedy sampling
+        id = llama_sample_token_greedy(ctx, &cur_p);
+    } else {
+        if (mirostat == 1) {
+            static float mirostat_mu = 2.0f * mirostat_tau;
+            const int mirostat_m = 100;
+            llama_sample_temperature(ctx, &cur_p, temp);
+            id = llama_sample_token_mirostat(ctx, &cur_p, mirostat_tau, mirostat_eta, mirostat_m, &mirostat_mu);
+        } else if (mirostat == 2) {
+            static float mirostat_mu = 2.0f * mirostat_tau;
+            llama_sample_temperature(ctx, &cur_p, temp);
+            id = llama_sample_token_mirostat_v2(ctx, &cur_p, mirostat_tau, mirostat_eta, &mirostat_mu);
+        } else {
+            // Temperature sampling
+            llama_sample_top_k      (ctx, &cur_p, top_k, 1);
+            llama_sample_tail_free  (ctx, &cur_p, tfs_z, 1);
+            llama_sample_typical    (ctx, &cur_p, typical_p, 1);
+            llama_sample_top_p      (ctx, &cur_p, top_p, 1);
+            llama_sample_temperature(ctx, &cur_p, temp);
+
+            {
+                const int n_top = 10;
+                LOG("top %d candidates:\n", n_top);
+
+                for (int i = 0; i < n_top; i++) {
+                    const llama_token id = cur_p.data[i].id;
+                    LOG(" - %5d: '%12s' (%.3f)\n", id, llama_token_to_piece(ctx, id).c_str(), cur_p.data[i].p);
+                }
+            }
+
+            id = llama_sample_token(ctx, &cur_p);
+
+            LOG("sampled token: %5d: '%s'\n", id, llama_token_to_piece(ctx, id).c_str());
+        }
+    }
+    // printf("`%d`", candidates_p.size);
+
+    if (grammar != NULL) {
+        llama_grammar_accept_token(ctx, grammar, id);
+    }
+
+    return id;
 }
+
+*/

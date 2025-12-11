@@ -276,17 +276,15 @@ void* load_binding_model_custom(const char *fname, int n_ctx, int n_seed, bool m
 
 // Temporary workaround for https://github.com/go-skynet/go-llama.cpp/issues/218
 #ifdef GGML_USE_CUBLAS
-    lparams = new common_params();
-    lparams->model.path = fname_str;
+    lparams = create_common_params_cuda(fname_str);
 #else
-    lparams = new common_params();
-    lparams->model.path = fname_str;
+    lparams = create_common_params(fname_str, lora_str, lora_base_str);
 #endif
     
     llama_binding_state * state = new llama_binding_state;
     
     lparams->n_ctx      = n_ctx;
-    lparams->sampling.seed       = n_seed;
+    lparams->seed       = n_seed;
     // lparams->memory_f16     = memory_f16; // Removed in newer llama.cpp? Check common_params definition if needed. 
     // common_params usually has bool f16_kv? No, it has enum.
     // Let's assume memory_f16 maps to something or ignore if not critical for now.
@@ -300,7 +298,7 @@ void* load_binding_model_custom(const char *fname, int n_ctx, int n_seed, bool m
     lparams->embedding  = embeddings;
     lparams->use_mlock  = mlock;
     lparams->n_gpu_layers = n_gpu_layers;
-
+    lparams->perplexity = perplexity;
     lparams->use_mmap = mmap;
 
     // lparams->low_vram = low_vram; // Not in common_params?
@@ -329,9 +327,9 @@ void* load_binding_model_custom(const char *fname, int n_ctx, int n_seed, bool m
             const std::regex regex{R"([,/]+)"};
             std::sregex_token_iterator it{arg_next.begin(), arg_next.end(), regex, -1};
             std::vector<std::string> split_arg{it, {}};
-            GGML_ASSERT(split_arg.size() <= 128);
+            GGML_ASSERT(split_arg.size() <= LLAMA_MAX_DEVICES);
 
-            for (size_t i = 0; i < 128; ++i) {
+            for (size_t i = 0; i < LLAMA_MAX_DEVICES; ++i) {
                 if (i < split_arg.size()) {
                     lparams->tensor_split[i] = std::stof(split_arg[i]);
                 } else {
